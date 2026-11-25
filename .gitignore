@@ -13,3 +13,24 @@ redis/data/
 qdrant/data/
 minio/data/
 *.log
+
+# Generated output (all modules)
+**/node_modules/
+**/target/
+**/dist/
+coverage/
+**/coverage/
+*.tsbuildinfo
+
+# Local tools, scratch work, and credentials
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+Thumbs.db
+Desktop.ini
+*.local
+*.pem
+*.key
+cookies.txt
+cookies-*.txt
+.scratch/

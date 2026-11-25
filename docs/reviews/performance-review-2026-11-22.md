@@ -39,7 +39,7 @@
 
 所有 Java 源码和测试统一采用 Google Java Format（通过固定版本 Spotless），网页/扩展的 JS、Vue、CSS、HTML 和 JSON 采用固定版本 Prettier。EditorConfig/Git 属性统一编码、缩进和换行。CI 执行 Maven `verify` 与前端格式检查；四条 ArchUnit 规则约束控制器访问、下层反向依赖、数据类型与构造器注入。
 
-`MediaProcessRunner` 合并了五处实际重复的进程控制职责；`MediaCard` 是具有独立数据与更新周期的展示组件。保留现有分层和模式策略，没有为了模式数量新增无用途的接口或工厂。具体职责与维护命令见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
+`MediaProcessRunner` 合并了五处实际重复的进程控制职责；`MediaCard` 是具有独立数据与更新周期的展示组件。保留现有分层和模式策略，没有为了模式数量新增无用途的接口或工厂。具体职责与维护命令见 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
 
 基线有 172 个 Git 文件，已排除 `node_modules`、`target`、`dist` 和运行用配置。扫描后删除 `server/HELP.md`（未引用的 Spring 初始化帮助模板）、`docs/images/agent-result.png`、`docs/images/video-agent-demo.png`（未引用截图），共约 102KB；有引用的项目截图、审查记录、测试、迁移和 Maven Wrapper 保留。新增文件对应资源执行器、组件、回归测试、持续格式配置和维护记录，因此文件总数不会作为删减目标。Git 历史保留，删除资源可追溯恢复。
 

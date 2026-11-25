@@ -156,6 +156,8 @@ sequenceDiagram
 
 ## 本地运行
 
+从零学习建议先阅读 [文档导航](docs/README.md)、[学习路线](docs/learning/README.md) 和 [Git 工作流](docs/development/git-workflow.md)。
+
 ### 环境要求
 
 | 组件 | 要求 | 说明 |
@@ -255,9 +257,14 @@ DoVideoAI
 ├── client/              # Vue 3 工作台
 ├── server/              # Spring Boot API 与 Video Agent
 ├── extension/           # Chrome 侧栏扩展与回归测试
-├── docs/                # 设计、审查报告与项目截图
+├── docs/                # 文档导航、架构、学习、开发规范与审查归档
+│   ├── architecture/    # 架构与设计文档
+│   ├── development/     # Git 工作流与开发说明
+│   ├── learning/        # 从零学习路线与问答资料
+│   ├── reviews/         # 历史审查报告
+│   └── images/          # 项目截图
 ├── scripts/             # 本地启动脚本
-├── rocketmq/            # Broker 配置
+├── infra/rocketmq/      # RocketMQ Broker 配置
 ├── docker-compose.yml   # 中间件编排
 └── .env.example         # 本地配置模板
 ```
@@ -268,7 +275,7 @@ DoVideoAI
 
 知识分块与视频预处理分别复用已有检查点，网页资料卡片独立渲染，JSON/文本响应启用压缩。音频、关键帧和分析模式保留原有参数与输出要求。
 
-Java 使用 Google Java Format，网页与扩展使用 Prettier，CI 检查格式、分层依赖与功能回归。开发命令及目录职责见 [贡献规范](CONTRIBUTING.md)，实测结果和边界见 [性能与代码治理报告](docs/performance-review-2026-11-22.md)。
+Java 使用 Google Java Format，网页与扩展使用 Prettier，CI 检查格式、分层依赖与功能回归。开发命令及目录职责见 [贡献规范](CONTRIBUTING.md)，实测结果和边界见 [性能与代码治理报告](docs/reviews/performance-review-2026-11-22.md)。
 
 ## License
 
