@@ -1,3 +1,5 @@
+> **来源与二次开发说明**：本仓库基于 [Xiaoc7r/DOVideo-AI](https://github.com/Xiaoc7r/DOVideo-AI) 进行学习与二次开发。原项目许可证中的版权署名为 `Copyright (c) 2026 Majst`，原始代码遵循 [MIT License](LICENSE)。本仓库保留原版权与许可声明，后续修改通过 Git 提交记录追踪。详细说明见 [NOTICE.md](NOTICE.md)。
+
 <div align="center">
   <h2>DoVideoAI</h2>
   
