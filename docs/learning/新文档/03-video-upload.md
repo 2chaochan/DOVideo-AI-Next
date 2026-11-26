@@ -6,9 +6,9 @@
 
 ## 阅读背景与实现来源
 
-原项目已具备分片上传、Redis 上传状态、MinIO 分片存储、读写锁和完成请求重试处理。本仓库在这些能力上增加了数据库完成凭据及事务保护，代码变更见 [提交 3b20e54](https://github.com/2chaochan/DOVideo-AI-Next/commit/3b20e54)。原项目来源及许可见 [NOTICE](../../NOTICE.md)。
+原项目已具备分片上传、Redis 上传状态、MinIO 分片存储、读写锁和完成请求重试处理。本仓库在这些能力上增加了数据库完成凭据及事务保护，代码变更见 [提交 3b20e54](https://github.com/2chaochan/DOVideo-AI-Next/commit/3b20e54)。原项目来源及许可见 [NOTICE](../../../NOTICE.md)。
 
-本篇对应这次改造后的实现。工程部署和兼容细节见 [修改说明](../development/upload-idempotency.md)。
+本篇对应这次改造后的实现。工程部署和兼容细节见 [修改说明](../../development/upload-idempotency.md)。
 
 ## 一次上传有哪些身份和状态
 
@@ -26,7 +26,7 @@
 
 ## 先沿入口阅读一次流程
 
-从 [MediaController](../../server/src/main/java/com/example/server/controller/MediaController.java) 找到下面的入口，再进入 [ChunkUploadService](../../server/src/main/java/com/example/server/service/ChunkUploadService.java)。
+从 [MediaController](../../../server/src/main/java/com/example/server/controller/MediaController.java) 找到下面的入口，再进入 [ChunkUploadService](../../../server/src/main/java/com/example/server/service/ChunkUploadService.java)。
 
 | 接口 | 服务方法 | 主要职责 |
 | --- | --- | --- |
@@ -89,7 +89,7 @@ sequenceDiagram
 
 ### 完成凭据表保存什么
 
-[V4 数据库迁移](../../server/src/main/resources/db/migration/V4__persist_chunk_upload_completions.sql) 新增 `chunk_upload_completions`：
+[V4 数据库迁移](../../../server/src/main/resources/db/migration/V4__persist_chunk_upload_completions.sql) 新增 `chunk_upload_completions`：
 
 | 字段 | 作用 |
 | --- | --- |
@@ -103,7 +103,7 @@ sequenceDiagram
 
 ### 为什么两次插入必须在一个事务里
 
-[ChunkUploadRepository.save](../../server/src/main/java/com/example/server/repository/ChunkUploadRepository.java) 的核心代码如下：
+[ChunkUploadRepository.save](../../../server/src/main/java/com/example/server/repository/ChunkUploadRepository.java) 的核心代码如下：
 
 ```java
 @Transactional
@@ -157,11 +157,11 @@ MinIO 不参与这个数据库事务。调用 `@Transactional` 不会自动撤�
 
 | 测试类 | 建议先找的方法 | 检查的业务保证 |
 | --- | --- | --- |
-| [ChunkUploadServiceTest](../../server/src/test/java/com/example/server/service/ChunkUploadServiceTest.java) | `committedUploadSurvivesMissingRedisReceiptAndMetadata` | Redis 完成缓存失败且元数据丢失，后续请求仍复用完成结果 |
+| [ChunkUploadServiceTest](../../../server/src/test/java/com/example/server/service/ChunkUploadServiceTest.java) | `committedUploadSurvivesMissingRedisReceiptAndMetadata` | Redis 完成缓存失败且元数据丢失，后续请求仍复用完成结果 |
 | 同上 | `lostAcknowledgementAfterDatabaseCommitDoesNotCreateAnotherMedia` | 模拟提交成功后确认丢失，重试不再次保存，也不删除原视频 |
 | 同上 | `persistentCompletionCannotBeReadOrReusedByAnotherUser` | 幂等命中仍必须检查用户归属 |
 | 同上 | `deletedMediaDoesNotAllowOldUploadToBeRecreated` | 删除后的上传身份不能重新建档 |
-| [ChunkUploadRepositoryTest](../../server/src/test/java/com/example/server/repository/ChunkUploadRepositoryTest.java) | `duplicateUploadRollsBackSecondMediaInsert` | 重复凭据使第二条媒体插入回滚 |
+| [ChunkUploadRepositoryTest](../../../server/src/test/java/com/example/server/repository/ChunkUploadRepositoryTest.java) | `duplicateUploadRollsBackSecondMediaInsert` | 重复凭据使第二条媒体插入回滚 |
 | 同上 | `receiptFailureRollsBackMediaAndAllowsRetry` | 凭据写入失败时媒体也回滚，后续仍可重试 |
 | 同上 | `concurrentSubmissionsCommitExactlyOneMedia` | 两个线程竞争同一上传身份，最终只提交一条媒体和一条凭据 |
 
