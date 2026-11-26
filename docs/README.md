@@ -5,6 +5,7 @@
 | 入口 | 内容 |
 | --- | --- |
 | [从零学习路线](learning/README.md) | 分阶段阅读代码、练习与验收目标 |
+| [上传幂等学习笔记](learning/03-upload-idempotency.md) | 从故障窗口理解锁、事务、唯一约束与恢复测试 |
 | [工程目录说明](architecture/project-layout.md) | 模块边界、目录职责与整理范围 |
 | [Git 工作流](development/git-workflow.md) | 基线、分支、提交、比较与远程仓库配置 |
 | [上传数据库幂等](development/upload-idempotency.md) | 完成凭据、事务、重试行为和部署边界 |
