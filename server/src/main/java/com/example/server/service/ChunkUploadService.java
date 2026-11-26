@@ -3,6 +3,7 @@ package com.example.server.service;
 import com.example.server.common.ErrorCode;
 import com.example.server.entity.MediaFile;
 import com.example.server.exception.BusinessException;
+import com.example.server.repository.ChunkUploadRepository;
 import com.example.server.utils.MinioUtils;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
@@ -13,6 +14,7 @@ import java.nio.file.Path;
 import java.security.DigestOutputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
@@ -25,6 +27,7 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -42,16 +45,19 @@ public class ChunkUploadService {
   private final RedissonClient redissonClient;
   private final MinioUtils minioUtils;
   private final MediaService mediaService;
+  private final ChunkUploadRepository uploads;
 
   public ChunkUploadService(
       StringRedisTemplate redisTemplate,
       RedissonClient redissonClient,
       MinioUtils minioUtils,
-      MediaService mediaService) {
+      MediaService mediaService,
+      ChunkUploadRepository uploads) {
     this.redisTemplate = redisTemplate;
     this.redissonClient = redissonClient;
     this.minioUtils = minioUtils;
     this.mediaService = mediaService;
+    this.uploads = uploads;
   }
 
   public String initialize(String filename, int totalChunks, Long userId) throws IOException {
@@ -72,6 +78,15 @@ public class ChunkUploadService {
   }
 
   public Set<Integer> uploadedChunks(String uploadId, Long userId) {
+    validateUploadId(uploadId);
+    var completion = uploads.find(uploadId);
+    if (completion != null) {
+      requireCompletionOwner(completion, userId);
+      mediaService.requireOwnedMedia(completion.mediaId(), userId);
+      Set<Integer> result = new TreeSet<>();
+      for (int i = 0; i < completion.totalChunks(); i++) result.add(i);
+      return result;
+    }
     requireUpload(uploadId, userId);
     Set<String> members = redisTemplate.opsForSet().members(partsKey(uploadId));
     Set<Integer> result = new TreeSet<>();
@@ -89,15 +104,14 @@ public class ChunkUploadService {
       throw new IllegalArgumentException("chunk size cannot exceed 5MB");
     }
 
+    validateUploadId(uploadId);
+    // Check the durable receipt before Redis metadata, which may have expired.
+    if (completedUpload(uploadId, userId) != null) return;
     Map<Object, Object> metadata = requireUpload(uploadId, userId);
     int expectedChunks = Integer.parseInt(String.valueOf(metadata.get("totalChunks")));
     if (totalChunks != expectedChunks || chunkIndex < 0 || chunkIndex >= expectedChunks) {
       throw new IllegalArgumentException("invalid chunk index or totalChunks");
     }
-    // A response can be lost after merging. Late chunk retries must not recreate
-    // temporary objects for an upload that already has its final media record.
-    if (completedUpload(uploadId, userId) != null) return;
-
     RLock uploadLock = redissonClient.getReadWriteLock("lock:upload:state:" + uploadId).readLock();
     boolean acquired = false;
     try {
@@ -125,6 +139,8 @@ public class ChunkUploadService {
 
   public MediaFile complete(String uploadId, Long userId) throws Exception {
     validateUploadId(uploadId);
+    MediaFile saved = completedUpload(uploadId, userId);
+    if (saved != null) return saved;
     RLock mergeLock = redissonClient.getReadWriteLock("lock:upload:state:" + uploadId).writeLock();
     // 这两种情况是客户端可重试的“状态冲突”，不是服务端故障：用 BusinessException 标成 409，
     // 避免和本类中真正的内部错误（如 md5Digest 的 IllegalStateException）混在一起被兜底成 500。
@@ -157,17 +173,45 @@ public class ChunkUploadService {
         }
 
         String fileUrl = minioUtils.uploadLocalFile(mergedFile.toFile(), filename);
-        MediaFile mediaFile =
-            mediaService.saveUploadedMedia(
-                filename, fileUrl, userId, HexFormat.of().formatHex(digest.digest()));
-        // 先记成功再清现场。清理失败或客户端重试，都不会再插一条媒体记录。
-        // The receipt must outlive the resumable metadata, including the
-        // small time gap between these Redis calls near expiry.
-        redisTemplate
-            .opsForValue()
-            .set(completedKey(uploadId), String.valueOf(mediaFile.getId()), 25, TimeUnit.HOURS);
-        redisTemplate.expire(uploadKey(uploadId), 1, TimeUnit.DAYS);
-        redisTemplate.expire(partsKey(uploadId), 1, TimeUnit.DAYS);
+        MediaFile mediaFile = new MediaFile();
+        mediaFile.setFilename(filename);
+        mediaFile.setFilePath(fileUrl);
+        mediaFile.setUserId(userId);
+        mediaFile.setStatus("COMPLETED");
+        mediaFile.setContentHash(HexFormat.of().formatHex(digest.digest()));
+        mediaFile.setUploadTime(LocalDateTime.now());
+        try {
+          // The Spring repository proxy commits both rows before returning.
+          mediaFile = uploads.save(uploadId, totalChunks, mediaFile);
+        } catch (DuplicateKeyException duplicate) {
+          removeUncommittedObject(fileUrl, duplicate);
+          MediaFile existing = completedUpload(uploadId, userId);
+          if (existing == null) throw duplicate;
+          return existing;
+        } catch (RuntimeException failure) {
+          // A connection failure during COMMIT can have an unknown outcome.
+          // Keep the object: deleting it could break an already committed media row.
+          log.warn(
+              "upload_database_completion_failed uploadId={} objectRetained=true",
+              uploadId,
+              failure);
+          throw failure;
+        }
+        mediaService.rememberContentHash(mediaFile.getId(), mediaFile.getContentHash());
+        mediaService.invalidateUserList(userId);
+        try {
+          redisTemplate
+              .opsForValue()
+              .set(completedKey(uploadId), String.valueOf(mediaFile.getId()), 25, TimeUnit.HOURS);
+          redisTemplate.expire(uploadKey(uploadId), 1, TimeUnit.DAYS);
+          redisTemplate.expire(partsKey(uploadId), 1, TimeUnit.DAYS);
+        } catch (RuntimeException cacheFailure) {
+          log.warn(
+              "upload_completion_cache_failed uploadId={} mediaId={}",
+              uploadId,
+              mediaFile.getId(),
+              cacheFailure);
+        }
         cleanup(uploadId, totalChunks, mediaFile.getId());
         return mediaFile;
       } finally {
@@ -179,6 +223,12 @@ public class ChunkUploadService {
   }
 
   private MediaFile completedUpload(String uploadId, Long userId) {
+    var completion = uploads.find(uploadId);
+    if (completion != null) {
+      requireCompletionOwner(completion, userId);
+      return mediaService.requireOwnedMedia(completion.mediaId(), userId);
+    }
+    // Compatibility with uploads completed before migration V4, while their receipt lives.
     String mediaId = redisTemplate.opsForValue().get(completedKey(uploadId));
     if (mediaId == null) return null;
     try {
@@ -186,6 +236,19 @@ public class ChunkUploadService {
     } catch (NumberFormatException e) {
       redisTemplate.delete(completedKey(uploadId));
       return null;
+    }
+  }
+
+  private void requireCompletionOwner(ChunkUploadRepository.Completion completion, Long userId) {
+    if (!Objects.equals(completion.userId(), userId)) throw new SecurityException("无权访问该上传任务");
+  }
+
+  private void removeUncommittedObject(String fileUrl, RuntimeException failure) {
+    try {
+      minioUtils.removeFile(fileUrl);
+    } catch (RuntimeException cleanupFailure) {
+      failure.addSuppressed(cleanupFailure);
+      log.warn("duplicate_upload_object_cleanup_failed", cleanupFailure);
     }
   }
 
@@ -224,7 +287,7 @@ public class ChunkUploadService {
     }
     // Keep the small ownership metadata and part indexes until their TTL expires.
     // A client that missed the successful response checks /upload-status first;
-    // deleting them would make it start over and insert a duplicate media record.
+    // Retain the legacy resumable metadata; durable completion no longer depends on it.
   }
 
   private MessageDigest md5Digest() {

@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.example.server.entity.MediaFile;
+import com.example.server.repository.ChunkUploadRepository;
 import com.example.server.utils.MinioUtils;
 import java.io.File;
 import java.io.OutputStream;
@@ -31,6 +32,8 @@ class ChunkUploadServiceTest {
   private final SetOperations<String, String> sets = mock(SetOperations.class);
   private final ValueOperations<String, String> values = mock(ValueOperations.class);
   private final MinioUtils minio = mock(MinioUtils.class);
+  private final ChunkUploadRepository uploads = mock(ChunkUploadRepository.class);
+  private final Map<String, ChunkUploadRepository.Completion> persisted = new HashMap<>();
   private final MediaService mediaService = mock(MediaService.class);
   private final RedissonClient redisson = mock(RedissonClient.class);
   private final Map<String, String> receipts = new java.util.concurrent.ConcurrentHashMap<>();
@@ -83,10 +86,17 @@ class ChunkUploadServiceTest {
         .thenReturn("http://localhost:9000/media/sample.mp4");
     media.setId(42L);
     media.setUserId(7L);
-    when(mediaService.saveUploadedMedia(anyString(), anyString(), eq(7L), anyString()))
-        .thenReturn(media);
+    when(uploads.find(anyString())).thenAnswer(call -> persisted.get(call.getArgument(0)));
+    when(uploads.save(anyString(), anyInt(), any(MediaFile.class)))
+        .thenAnswer(
+            call -> {
+              persisted.put(
+                  call.getArgument(0),
+                  new ChunkUploadRepository.Completion(42L, 7L, call.getArgument(1)));
+              return media;
+            });
     when(mediaService.requireOwnedMedia(42L, 7L)).thenReturn(media);
-    service = new ChunkUploadService(redis, redisson, minio, mediaService);
+    service = new ChunkUploadService(redis, redisson, minio, mediaService, uploads);
   }
 
   @Test
@@ -175,7 +185,7 @@ class ChunkUploadServiceTest {
     assertEquals(Set.of(0, 1), service.uploadedChunks(UPLOAD_ID, 7L));
     assertSame(media, service.complete(UPLOAD_ID, 7L));
 
-    verify(mediaService, times(1)).saveUploadedMedia(anyString(), anyString(), eq(7L), anyString());
+    verify(uploads, times(1)).save(eq(UPLOAD_ID), eq(2), any(MediaFile.class));
     verify(redis).expire(KEY, 1, TimeUnit.DAYS);
     verify(redis).expire(KEY + ":parts", 1, TimeUnit.DAYS);
     verify(minio).removeObject("chunk-uploads/" + UPLOAD_ID + "/part-0");
@@ -200,6 +210,72 @@ class ChunkUploadServiceTest {
     assertSame(media, service.complete(UPLOAD_ID, 7L));
     assertEquals(Set.of(0, 1), service.uploadedChunks(UPLOAD_ID, 7L));
     assertSame(media, service.complete(UPLOAD_ID, 7L));
-    verify(mediaService, times(1)).saveUploadedMedia(anyString(), anyString(), eq(7L), anyString());
+    verify(uploads, times(1)).save(eq(UPLOAD_ID), eq(2), any(MediaFile.class));
+  }
+
+  @Test
+  void committedUploadSurvivesMissingRedisReceiptAndMetadata() throws Exception {
+    doThrow(new IllegalStateException("Redis disconnected"))
+        .when(values)
+        .set(eq(KEY + ":completed"), anyString(), anyLong(), any(TimeUnit.class));
+    assertSame(media, service.complete(UPLOAD_ID, 7L));
+    receipts.clear();
+    when(hashes.entries(KEY)).thenReturn(Map.of());
+    reset(redis, redisson);
+    assertSame(media, service.complete(UPLOAD_ID, 7L));
+    assertEquals(Set.of(0, 1), service.uploadedChunks(UPLOAD_ID, 7L));
+    service.uploadChunk(UPLOAD_ID, 0, 2, new MockMultipartFile("file", new byte[] {1}), 7L);
+    verifyNoInteractions(redis, redisson);
+    verify(uploads, times(1)).save(eq(UPLOAD_ID), eq(2), any(MediaFile.class));
+    verify(minio, times(1)).uploadLocalFile(any(File.class), anyString());
+  }
+
+  @Test
+  void lostAcknowledgementAfterDatabaseCommitDoesNotCreateAnotherMedia() throws Exception {
+    when(uploads.save(anyString(), anyInt(), any(MediaFile.class)))
+        .thenAnswer(
+            call -> {
+              persisted.put(UPLOAD_ID, new ChunkUploadRepository.Completion(42L, 7L, 2));
+              throw new IllegalStateException("connection lost after commit");
+            });
+    assertThrows(IllegalStateException.class, () -> service.complete(UPLOAD_ID, 7L));
+    assertSame(media, service.complete(UPLOAD_ID, 7L));
+    verify(uploads, times(1)).save(eq(UPLOAD_ID), eq(2), any(MediaFile.class));
+    verify(minio, never()).removeFile(anyString());
+  }
+
+  @Test
+  void persistentCompletionCannotBeReadOrReusedByAnotherUser() {
+    persisted.put(UPLOAD_ID, new ChunkUploadRepository.Completion(42L, 7L, 2));
+    assertThrows(SecurityException.class, () -> service.complete(UPLOAD_ID, 8L));
+    assertThrows(SecurityException.class, () -> service.uploadedChunks(UPLOAD_ID, 8L));
+    assertThrows(
+        SecurityException.class,
+        () ->
+            service.uploadChunk(
+                UPLOAD_ID, 0, 2, new MockMultipartFile("file", new byte[] {1}), 8L));
+    verifyNoInteractions(minio);
+  }
+
+  @Test
+  void deletedMediaDoesNotAllowOldUploadToBeRecreated() {
+    persisted.put(UPLOAD_ID, new ChunkUploadRepository.Completion(42L, 7L, 2));
+    when(mediaService.requireOwnedMedia(42L, 7L))
+        .thenThrow(new java.util.NoSuchElementException("deleted"));
+    assertThrows(java.util.NoSuchElementException.class, () -> service.complete(UPLOAD_ID, 7L));
+    verify(uploads, never()).save(anyString(), anyInt(), any(MediaFile.class));
+    verifyNoInteractions(minio);
+  }
+
+  @Test
+  void databaseUniquenessConflictReturnsWinnerAndRemovesOnlyLosingObject() throws Exception {
+    when(uploads.save(anyString(), anyInt(), any(MediaFile.class)))
+        .thenAnswer(
+            call -> {
+              persisted.put(UPLOAD_ID, new ChunkUploadRepository.Completion(42L, 7L, 2));
+              throw new org.springframework.dao.DuplicateKeyException("upload_id");
+            });
+    assertSame(media, service.complete(UPLOAD_ID, 7L));
+    verify(minio).removeFile("http://localhost:9000/media/sample.mp4");
   }
 }
