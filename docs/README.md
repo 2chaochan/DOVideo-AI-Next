@@ -5,6 +5,8 @@
 | 入口 | 内容 |
 | --- | --- |
 | [从零学习路线](learning/README.md) | 分阶段阅读代码、练习与验收目标 |
+| [后端与模型基础](learning/新文档/00-foundations.md) | 从请求、存储和模型输入开始理解项目 |
+| [Agent 闭环教程](learning/新文档/06-agent-loop.md) | 计划、执行、检查、工具边界和终止条件 |
 | [上传幂等学习笔记](learning/新文档/03-video-upload.md) | 从故障窗口理解锁、事务、唯一约束与恢复测试 |
 | [工程目录说明](architecture/project-layout.md) | 模块边界、目录职责与整理范围 |
 | [Git 工作流](development/git-workflow.md) | 基线、分支、提交、比较与远程仓库配置 |

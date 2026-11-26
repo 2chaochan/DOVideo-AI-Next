@@ -1,85 +1,42 @@
-# 从零学习 DoVideoAI
+# 从基础概念学习视频 Agent 后端
 
-先建立“用户操作如何变成一个带证据的 Agent 任务”的整体认识，再逐步学习基础设施。每个阶段在独立 `study/` 分支记录观察与实验，避免一次改动整条链路。
+这份教程面向还不熟悉后端和大模型工程的学习者，以“上传一段二叉树课程视频，生成带证据的学习笔记”为贯穿案例。先认识术语，再解释业务为什么需要它，最后沿项目源码和测试验证理解。
 
-## 新笔记章节
+不要求先掌握所有中间件，也不要求第一天把项目完整跑起来。遇到术语先回到基础章；遇到长类先追踪当前方法的输入输出，不需要一次读完所有依赖。
 
-按下面的顺序阅读。所有章节结合本仓库当前代码编写，原作者问答保存在 [旧文档](../旧文档/README.md)。章节中的示例用于理解流程；拟议改进会标为后续方向。
+## 学习顺序
 
-| 章节 | 学习问题 |
-| --- | --- |
-| [01 项目全景](01-project-overview.md) | 一次视频分析经过哪些环节？ |
-| [02 接口与认证](02-api-and-auth.md) | 谁能提交任务，谁能查看结果？ |
-| [03 视频上传与幂等](03-video-upload.md) | 重复上传完成请求如何处理？ |
-| [04 异步任务](04-async-tasks.md) | 为什么要排队，失败后怎么办？ |
-| [05 视频上下文](05-video-context.md) | 模型怎样读懂视频中的语音和画面？ |
-| [06 Agent 闭环](06-agent-loop.md) | 计划、执行、检查怎样组成智能体？ |
-| [07 检索与记忆](07-retrieval-and-memory.md) | 怎样找证据，怎样接着上次任务继续？ |
-| [08 评估与成本](08-evaluation-and-cost.md) | 怎样判断质量，怎样限制耗时和费用？ |
-| [09 工程保障](09-production-engineering.md) | 如何验证和维护这个后端？ |
+| 阶段 | 章节 | 读完应该能够解释 |
+| --- | --- | --- |
+| 基础 | [00 后端和大模型基础](00-foundations.md) | 请求、JSON、内存、持久化、Prompt、Token、Java 基本结构 |
+| 全景 | [01 完整业务链路](01-project-overview.md) | 视频上传与分析为什么是不同阶段，各组件怎样配合 |
+| 接口 | [02 参数与身份权限](02-api-and-auth.md) | Spring 注解怎样接收参数，登录与媒体授权有何区别 |
+| 可靠输入 | [03 分片上传与幂等](03-video-upload.md) | 文件与媒体记录的关系，锁、约束和事务各管什么 |
+| 任务 | [04 异步与消息队列](04-async-tasks.md) | 受理与完成、生产与消费、重试与恢复的关系 |
+| 材料 | [05 视频上下文](05-video-context.md) | 音视频如何变成带时间信息的文字和图片证据 |
+| 智能体 | [06 计划执行检查](06-agent-loop.md) | 模型输入输出、Agent 循环、状态恢复和终止原因 |
+| 信息组织 | [07 检索与记忆](07-retrieval-and-memory.md) | 分块、Embedding、RAG、对话历史和检查点的区别 |
+| 效果 | [08 质量与预算](08-evaluation-and-cost.md) | 什么算改进，怎样设计评估并控制资源消耗 |
+| 实践 | [09 测试与工程维护](09-production-engineering.md) | 怎样验证故障行为、看日志并记录一次工程改造 |
 
-## 专题笔记与近期阅读顺序
+## 每章怎样学习
 
-已完成的第一篇专题是 [分片上传的数据库幂等](03-video-upload.md)，结合本仓库实际改造说明请求重试、分布式锁、事务、唯一约束和故障测试。
+先读概念和课程视频的例子，再打开章内链接定位对应代码，最后回答练习并对照参考答案。只会复述名词还不够，需要说出它在这个业务里接收什么、改变什么、失败会怎样。
 
-接下来两次学习可以按下面的顺序进行，按自己的进度安排：
+例如理解“幂等”，应能说明同一 `uploadId` 的完成请求重试为什么返回同一媒体，数据库唯一约束为什么还要与事务配合。理解“记忆”，应能区分对话输入与程序执行检查点。
 
-1. 先读 [目录职责](../../architecture/project-layout.md)、[Git 工作流](../../development/git-workflow.md) 和本页前两个阶段，建立项目入口与模块认识；有环境时运行前端 Demo。
-2. 再读专题笔记，沿 Controller、Service、Repository 阅读上传链路，运行上传相关测试，完成文末自测题。
+课程里的 JSON、请求和流程图有明确的教学用途；精简伪代码不应当作完整实现直接复制运行。代码事实以链接到的当前仓库为准，改造方向会明确标出，不作为现有功能介绍。
 
-学习时把原项目已有实现、本仓库后续修改和自己的推断分别记清楚。下面保留完整学习路线，后续专题在有实际代码与验证后逐步补充。
+## 第一次和第二次阅读
 
-## 第一阶段：认识项目与前端演示
+第一次可以只读 00、01、02，掌握请求、数据、身份与模块关系，再连读 05、06 建立 Agent 的整体认识。遇到上传或队列细节，回到 03、04。
 
-阅读 [项目介绍](../../../README.md) 和 [目录说明](../../architecture/project-layout.md)，认识 Java、Vue、HTTP、JSON、异步任务和环境变量的用途。
+第二次按顺序读完整教程，选择一项练习写成记录。有环境时再执行相应命令，未执行的实验保留为计划，不填写“已经通过”。
 
-在根目录打开终端：
+完整上传改造保留为 [进阶实践案例](experiments/upload-idempotency-case-study.md)，适合在读懂 03 后对照测试深入研究；记录自己的实验可使用 [实验指南](experiments/README.md)。
 
-```sh
-cd client
-npm ci
-npm run dev
-```
+## 文档来源与范围
 
-访问 `http://localhost:5173/?demo`，观察目标输入、任务阶段、结果和证据。该演示使用内置数据，可以先于数据库和模型配置进行。
+[旧文档](../旧文档/README.md) 保存原作者的两份问答，原文不在本次教程重写范围内。新教程解释原项目已有实现，并分别标注本仓库上传幂等等后续改造，来源与许可见 [NOTICE](../../../NOTICE.md)。
 
-阅读 `client/src/demoData.js`、`App.vue`、`api.js`、`useAnalysisWorkspace.js`。验收目标：解释页面如何发起请求、保存状态和展示进度；区分演示数据与真实后端响应。
-
-## 第二阶段：理解后端入口
-
-从 `server/src/main/java/com/example/server/ServerApplication.java` 开始，依次阅读 `controller/HealthController`、`UserController`、`AnalysisController` 和相应应用服务。结合 `resources/application.properties` 理解外部配置。
-
-阅读 `ArchitectureTest` 与 [贡献规范](../../../CONTRIBUTING.md)，理解 Controller、Service、Mapper 的职责。验收目标：能够从一个 HTTP 接口追踪到服务与数据库操作。
-
-## 第三阶段：追踪异步视频任务
-
-重点阅读 `AnalysisDispatchService`、`consumer/VideoAnalysisConsumer`、`VideoContextService`、`VideoTranscriptionService`、`TaskEventService` 和相关测试。
-
-画出“提交任务 → MQ → 视频解析 → 阶段事件”的调用图，区分 MySQL、Redis、MinIO 与 RocketMQ 的用途。验收目标：说明为什么请求提交后可以立即返回，以及失败后如何定位任务状态。
-
-## 第四阶段：理解 Agent 闭环
-
-重点阅读 `service/AgentLoopService`、`service/mode/ModeRouter`、`utils/DeepSeekUtils`、`EvidenceVerificationService`、`AgentExecutionBudget` 与 `dto/AgentState`。
-
-沿代码查找 Planner、Executor、Critic 的输入输出，确认轮次、超时和 Token 预算的终止条件。验收目标：解释一次普通模型调用与这个项目的 Agent 编排分别承担什么职责，并找到证据不足时的处理分支。
-
-## 第五阶段：检索、检查点与评估
-
-阅读 `LongVideoContextService`、`VideoEvidenceRetrievalService`、`QdrantVectorStore`、`AgentCheckpointService` 和 `repository/AgentCheckpointRepository`。
-
-结合 `resources/evaluation/golden-video-tasks.json`、`AgentEvaluationService` 和 `OfflineAgentEvaluationRunner` 了解评估入口。验收目标：解释检索降级、状态恢复与离线评估如何帮助验证 Agent 行为。
-
-## 第六阶段：启动真实链路并做第一个改动
-
-按根 README 准备 JDK 21、Node.js 22、Docker、媒体工具、本地 `.env` 和模型服务配置。Windows 下先区分 PowerShell 与 Git Bash 的命令语法，详见 [Git 工作流](../../development/git-workflow.md)。
-
-先用短视频验证完整链路，再选择一个小目标，例如改善任务状态文案、补充一个失败场景的说明，或在理解现有断言后新增有意义的边界测试。运行涉及模块的现有检查，保存输入、预期与实际结果，再提交。
-
-可使用以下提问模板记录学习：
-
-- 这个类由谁调用，输入输出是什么？
-- 状态存在哪里，失败后由谁恢复？
-- 哪个条件决定重试、降级或终止？
-- 哪个现有测试可以验证我的理解？
-
-原有 [六支柱问答](../旧文档/interview-qa-six-pillars.md) 与 [进阶问答](../旧文档/interview-qa-v2.md) 可作为补充资料；其中的描述需要结合当前源码核对。
+部署步骤见 [根 README](../../../README.md)，工程目录与 Git 操作分别见 [目录说明](../../architecture/project-layout.md) 和 [Git 工作流](../../development/git-workflow.md)。本文档不要求为了学习先改动源码或重置运行数据。

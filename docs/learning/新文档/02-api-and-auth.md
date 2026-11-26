@@ -1,38 +1,62 @@
-# 02 接口如何识别用户并保护视频
+# 02 从 HTTP 参数读懂接口和权限
 
-后端收到“查看编号 42 的视频”时，需要回答两个问题：请求来自谁？这个视频是否属于他？知道编号不代表有权访问。
+现在我们准备请求后端分析视频 42。需要给后端媒体编号、分析目标、模式，还需要证明请求者是谁。它们虽然都随请求出现，可信程度和用途却不同。
 
-## 一次受保护请求的路径
+## 1 参数 请求体和请求头
 
-```text
-携带 Authorization 的请求
-  → AuthInterceptor 校验登录会话
-  → 将 userId 放到请求属性
-  → Controller 接收 userId
-  → Service 检查媒体归属
-  → 读取或修改数据
+路径表示要访问哪个入口。查询参数附在问号后，请求体承载较完整的数据，请求头携带令牌、内容类型等信息。本项目接口同时存在这些形式，要按方法上的注解判断。
+
+下面是分析入口的教学请求，省略了真实主机和令牌，中文参数在实际网络请求中会编码：
+
+```http
+POST /analysis/ai?id=42&goal=整理前序遍历步骤&mode=LEARNING
+Authorization: Bearer YOUR_TOKEN
 ```
 
-`AuthService` 登录成功后生成随机会话令牌。客户端在后续请求中携带 `Bearer` 令牌，后端通过 Redis 会话解析用户身份。这里采用的是服务端会话，不要把项目里的 token 自动理解为 JWT。
+登录接口则接收 JSON 请求体。不要把同样的字段随意搬到另一个位置，参数位置属于接口契约的一部分。
 
-## 认证和授权分别是什么
+## 2 把 Spring 注解翻译成人话
 
-认证回答“你是谁”；授权回答“你能做什么”。`AuthInterceptor` 处理登录身份，`MediaService.requireOwnedMedia` 检查视频所属用户，管理员接口还会调用 `requireAdmin`。
+注解是附在 Java 类或方法上的元数据，Spring 用它们决定如何接收请求和调用程序。[AnalysisController](../../../server/src/main/java/com/example/server/controller/AnalysisController.java) 中可以找到以下写法：
 
-例如，A 登录后拿到自己的令牌，即使猜到 B 的 `mediaId`，服务也应拒绝读取 B 的视频。客户端提交的用户编号不能直接作为可信身份。
+| 写法 | 在这里的含义 |
+| --- | --- |
+| `@RestController` | 这是接收 Web 请求并返回数据的类 |
+| `@RequestMapping("/analysis")` | 本类接口共享的路径前缀 |
+| `@PostMapping("/ai")` | 这个方法接收 POST 分析请求 |
+| `@RequestParam Long id` | 从请求参数读取编号并转换为整数对象 |
+| `@RequestAttribute(...) Long userId` | 读取服务端在请求处理中放入的身份属性 |
 
-## Controller 和 Service 为什么分开
+注意最后两项的区别：视频编号来自客户端选择，身份来自后端认证。客户端声称“我是用户 7”并不足以成立。
 
-Controller 接收 HTTP 参数、取出认证身份并返回响应。Service 处理业务规则，例如检查归属、提交分析或删除媒体。Mapper 和仓储负责持久化操作。
+## 3 登录如何跨越多个请求
 
-这让同一套业务规则不必在每个接口里重新写一遍。前端是否隐藏按钮只影响界面，最终权限检查仍在后端完成。
+HTTP 不自动替应用记住登录。用户提交账号密码后，`AuthService` 验证凭据，生成随机 token，并在 Redis 保存会话。客户端随后发送 `Authorization: Bearer ...`，后端用它解析用户。
 
-## 动手阅读
+这里的会话 token 是随机凭据，不是 JWT。Token 一词只说明它是令牌，具体有没有签名载荷、是否需要查服务端状态，要看实现。
 
-依次阅读 [AuthInterceptor](../../../server/src/main/java/com/example/server/config/AuthInterceptor.java)、`WebConfig`、`AuthService.resolveUser`，再在 `MediaController` 中找到 `@RequestAttribute`。最后追到 `MediaService.requireOwnedMedia`。
+密码存储也不应直接保存原始文字。项目新注册密码使用带盐的 PBKDF2 派生结果。盐使相同密码的保存结果不必相同；验证时重做派生并比较，后端不需要把派生值还原成原密码。
 
-当前拦截路径由 `WebConfig` 显式配置。以后增加接口时，需要同步检查是否应受保护；引入统一的默认拒绝策略是后续工程方向。
+## 4 认证之后还要授权
 
-自测：登录成功为什么仍不能查看任意用户的视频？请分别指出认证检查和归属检查的位置。
+`AuthInterceptor` 从请求头解析登录身份，再设置请求属性。这个过程回答“请求者是谁”。`MediaService.requireOwnedMetadata` 或 `requireOwnedMedia` 比较视频的归属用户，回答“他能否操作这条视频”。管理员操作还要检查角色。
 
-下一篇：[视频上传与幂等](03-video-upload.md)。
+例如用户 8 完成了合法登录，但媒体 42 属于用户 7。若后端只检查“已登录”，用户 8 就可能越权。正确的业务流程必须继续检查具体资源归属。
+
+前端隐藏删除按钮不能替代授权，因为请求可以由其他客户端直接发出。权限规则最终要在后端执行。
+
+## 5 看懂响应和错误
+
+本项目的响应外壳是 `Result<T>`，包含 `code`、`message` 和 `data`。`T` 表示数据类型可以变化：健康检查可以返回字符串，媒体接口可以返回对象。
+
+HTTP 401 通常表示需要有效认证，403 表示无权访问，202 表示受理，200 表示请求成功处理。项目又用业务码描述具体结果。调试时同时查看 HTTP 状态和响应内容，不要只看有无 JSON。
+
+## 6 练习与参考答案
+
+阅读 `AuthInterceptor.preHandle`，找到令牌解析和 `setAttribute`；再进入媒体服务找归属比较。
+
+问：修改浏览器里缓存的用户编号能否改变真实身份？答：只改界面缓存不应改变服务端会话解析出的身份，权限判断应使用认证后的用户编号。
+
+问：登录有效但访问别人视频失败，是不是登录功能坏了？答：不是。认证成功之后，资源授权仍可以拒绝请求。
+
+下一章：[视频上传](03-video-upload.md)。
